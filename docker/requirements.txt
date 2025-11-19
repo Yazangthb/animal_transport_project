@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+transformers>=4.42.0
+accelerate
+peft
+# bitsandbytes
+pydantic>=2.0
+pillow
+numpy
+datasets
+torch
+python-multipart
