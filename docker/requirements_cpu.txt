@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+pydantic>=2.0
+numpy
+pillow
+llama-cpp-python==0.2.56   # CPU backend for GGUF models
