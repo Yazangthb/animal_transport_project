@@ -1,4 +1,3 @@
-# api/inference_reasoning.py
 import json
 from typing import Dict, Optional
 
@@ -7,64 +6,47 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel
 
 from .config import REASONING_MODEL_NAME, REASONING_LORA_PATH
+from .prompts import SYSTEM_PROMPT
 
 
 class ReasoningWrapper:
     def __init__(self):
-        # Windows + RTX 1650 safe dtype
-        dtype = torch.float16
-
-        # Load tokenizer
+        print("[Reasoning] Loading tokenizer...")
         self.tokenizer = AutoTokenizer.from_pretrained(
             REASONING_MODEL_NAME,
             trust_remote_code=True
         )
 
-        # Load base model
+        print("[Reasoning] Loading base model on CPU...")
         base_model = AutoModelForCausalLM.from_pretrained(
             REASONING_MODEL_NAME,
-            torch_dtype=dtype,
-            device_map="auto",
+            device_map={"": "cpu"},
+            torch_dtype=torch.float32,   # avoid mixed precision on Windows CPU
             trust_remote_code=True
         )
 
         # Try loading LoRA
         try:
+            print(f"[Reasoning] Loading LoRA adapters from {REASONING_LORA_PATH}")
             self.model = PeftModel.from_pretrained(base_model, REASONING_LORA_PATH)
-            print(f"[INFO] Loaded LoRA adapters from {REASONING_LORA_PATH}")
         except Exception:
-            print("[WARNING] No LoRA adapters found. Using base model only.")
+            print("[Reasoning] WARNING: No LoRA adapters found. Using base model only.")
             self.model = base_model
 
         self.model.eval()
 
-    def _build_prompt(self, features: Dict) -> str:
-        schema = (
-            "You are a transport planning assistant for animals.\n"
-            "Given a JSON input about an animal and a distance in kilometers,\n"
-            "output a strictly valid JSON with allowed modes and time estimates.\n\n"
-            "Output JSON structure:\n"
-            "{\n"
-            '  "available_modes": [\n'
-            "    {\n"
-            '      "mode": "truck | train | ship | passenger_plane_cabin | passenger_plane_cargo | cargo_plane",\n'
-            '      "estimated_time_hours": float,\n'
-            '      "notes": "short explanation"\n'
-            "    }\n"
-            "  ],\n"
-            '  "disallowed_modes": ["truck", ...],\n'
-            '  "reasoning": "explanation"\n'
-            "}\n\n"
-            "Respond **only** with JSON.\n\n"
-        )
-
+    def _build_messages(self, features: Dict) -> list:
         input_json = json.dumps(features, ensure_ascii=False)
-        return schema + "Input:\n" + input_json + "\n\nOutput JSON:\n"
+        return [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": input_json}
+        ]
 
     def plan_transport(self, features: Dict) -> Dict:
-        prompt = self._build_prompt(features)
+        messages = self._build_messages(features)
+        prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+        inputs = self.tokenizer(prompt, return_tensors="pt").to("cpu")
 
         with torch.no_grad():
             output_ids = self.model.generate(
@@ -73,29 +55,29 @@ class ReasoningWrapper:
                 do_sample=False,
             )
 
-        generated = self.tokenizer.decode(output_ids[0], skip_special_tokens=True)
-
-        # Extract JSON
+        generated = self.tokenizer.decode(output_ids[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True)
+        print("generated: ", generated)
         try:
+            # Assume the generated text starts with JSON
             if "{" in generated:
-                json_str = generated[generated.index("{"): generated.rindex("}") + 1]
+                start = generated.index("{")
+                end = generated.rindex("}") + 1
+                json_str = generated[start:end]
             else:
-                json_str = generated
+                json_str = generated.strip()
+            print("extracted json_str: ", repr(json_str))
             data = json.loads(json_str)
-        except Exception:
+        except Exception as e:
+            print(f"JSON parsing error: {e}")
             data = {
                 "available_modes": [],
                 "disallowed_modes": [],
                 "reasoning": "Failed to produce valid JSON."
             }
 
-        # Normalize missing keys
-        if "available_modes" not in data:
-            data["available_modes"] = []
-        if "disallowed_modes" not in data:
-            data["disallowed_modes"] = []
-        if "reasoning" not in data:
-            data["reasoning"] = ""
+        data.setdefault("available_modes", [])
+        data.setdefault("disallowed_modes", [])
+        data.setdefault("reasoning", "")
 
         return data
 

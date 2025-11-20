@@ -3,6 +3,7 @@ import random
 from pathlib import Path
 
 from api.rules import CATEGORY_ALLOWED_MODES, TRANSPORT_MODES, compute_travel_time_hours
+from api.prompts import SYSTEM_PROMPT
 
 OUTPUT_PATH = Path("train/dataset/train.jsonl")
 
@@ -82,11 +83,7 @@ def sample_example() -> dict:
     messages = [
         {
             "role": "system",
-            "content": (
-                "You are a transport planning assistant for animals. "
-                "Given an input JSON with animal features and distance, "
-                "you output a JSON describing allowed modes, estimated time, and reasoning."
-            ),
+            "content": SYSTEM_PROMPT,
         },
         {
             "role": "user",

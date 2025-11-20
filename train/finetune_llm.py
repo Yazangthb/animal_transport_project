@@ -14,11 +14,12 @@ from transformers import (
 from peft import LoraConfig, get_peft_model
 
 from pathlib import Path
-import os
+
+from api.config import REASONING_MODEL_NAME
 
 DATA_PATH = Path("train/dataset/train.jsonl")
 OUTPUT_DIR = Path("models/reasoning_lora")
-MODEL_NAME = os.getenv("REASONING_MODEL_NAME", "Qwen/Qwen2.5-7B-Instruct")
+MODEL_NAME = REASONING_MODEL_NAME
 
 
 class ChatDataset(Dataset):

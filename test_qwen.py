@@ -2,7 +2,9 @@ import torch
 from transformers import AutoProcessor
 from transformers import Qwen2_5_VLForConditionalGeneration  # <-- CORRECT class
 
-model_name = "Qwen/Qwen2.5-VL-3B-Instruct"
+from api.config import VLM_MODEL_NAME
+
+model_name = VLM_MODEL_NAME
 
 print("Loading processor...")
 processor = AutoProcessor.from_pretrained(

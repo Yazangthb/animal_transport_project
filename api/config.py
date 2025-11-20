@@ -1,6 +1,9 @@
 # api/config.py
 import os
 import torch
+from dotenv import load_dotenv
+
+load_dotenv()  # Load .env file if present
 
 # Models
 VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME", "Qwen/Qwen2.5-VL-7B-Instruct")
