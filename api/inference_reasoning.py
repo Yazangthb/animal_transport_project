@@ -75,9 +75,31 @@ class ReasoningWrapper:
                 "reasoning": "Failed to produce valid JSON."
             }
 
-        data.setdefault("available_modes", [])
-        data.setdefault("disallowed_modes", [])
-        data.setdefault("reasoning", "")
+        # Normalize keys from model output to expected schema
+        if "allowed_modes" in data:
+            data["available_modes"] = data.pop("allowed_modes")
+        if "disallowed_modes" not in data:
+            data["disallowed_modes"] = []
+        if "available_modes" not in data:
+            data["available_modes"] = []
+        if "reasoning" not in data:
+            data["reasoning"] = ""
+
+        # Handle different time formats if present
+        if "estimated_time" in data:
+            # If model outputs simple time, convert to expected format
+            time_str = data["estimated_time"]
+            if isinstance(time_str, str):
+                try:
+                    hours = float(time_str.split()[0])
+                    data["available_modes"] = [{
+                        "mode": "air",  # Assuming air from context
+                        "estimated_time_hours": hours,
+                        "notes": "Estimated time from model output."
+                    }]
+                except:
+                    pass
+            data.pop("estimated_time", None)
 
         return data
 
