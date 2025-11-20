@@ -214,6 +214,14 @@ python train/generate_dataset.py
 
 Default size: **5000 samples**.
 
+## Configuration
+
+Model names and paths can be configured via environment variables or `.env` file. Copy `.env.example` to `.env` and modify as needed.
+
+Defaults:
+- VLM: Qwen/Qwen2.5-VL-7B-Instruct
+- Reasoning: Qwen/Qwen2.5-7B-Instruct
+
 Each example contains:
 
 ### Input (VLM → LLM):
