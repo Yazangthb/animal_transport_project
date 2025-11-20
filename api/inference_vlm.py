@@ -20,8 +20,8 @@ class VLMWrapper:
         print("[VLM] Loading model on CPU (Windows-safe)...")
         self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             VLM_MODEL_NAME,
-            device_map={"": "cpu"},
-            torch_dtype=torch.float32,
+            device_map={"": "cpu"},       # explicit CPU
+            torch_dtype=torch.float32,     # Windows-safe
             trust_remote_code=True,
         )
 
@@ -32,13 +32,18 @@ class VLMWrapper:
         img_bytes = base64.b64decode(img_base64)
         image = Image.open(BytesIO(img_bytes)).convert("RGB")
 
-        # Build prompt
+        # Resize image
+        TARGET_SIZE = (256, 256)
+        image = image.resize(TARGET_SIZE, Image.LANCZOS)
+
+        # Prompt
         prompt = (
             "Analyze the provided animal image. "
             "Return ONLY valid JSON with EXACT keys: "
             "animal_category, size_class, is_domesticated, dangerous_to_humans."
         )
 
+        # Chat messages
         messages = [
             {"role": "system", "content": "You classify animals from images."},
             {
@@ -50,19 +55,19 @@ class VLMWrapper:
             },
         ]
 
-        # 1) Build text chat template (string)
+        # Build text template
         text = self.processor.apply_chat_template(
             messages, tokenize=False
         )
 
-        # 2) Process image + text into model inputs
+        # Build model inputs
         inputs = self.processor(
             text=[text],
             images=[image],
             return_tensors="pt"
         ).to(self.device)
 
-        # 3) Generate model output
+        # Generate model output
         output = self.model.generate(
             **inputs,
             max_new_tokens=300,
@@ -73,7 +78,7 @@ class VLMWrapper:
             output, skip_special_tokens=True
         )[0]
 
-        # Extract JSON
+        # Extract JSON fragment from output
         start = decoded.find("{")
         end = decoded.rfind("}") + 1
         json_str = decoded[start:end]
@@ -83,7 +88,6 @@ class VLMWrapper:
         except Exception:
             print("[VLM] RAW OUTPUT:", decoded)
             raise ValueError("Failed to parse JSON from VLM output.")
-
 
 
 _vlm_instance = None
