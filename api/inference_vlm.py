@@ -40,7 +40,7 @@ class VLMWrapper:
         prompt = (
             "Analyze the provided animal image. "
             "Return ONLY valid JSON with EXACT keys: "
-            "animal_category, size_class, is_domesticated, dangerous_to_humans."
+            "animal_name, animal_category, size_class, is_domesticated, dangerous_to_humans."
         )
 
         # Chat messages
