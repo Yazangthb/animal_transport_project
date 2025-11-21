@@ -1,11 +1,14 @@
 import json
 import random
+import sys
 from pathlib import Path
 
-from api.rules import CATEGORY_ALLOWED_MODES, TRANSPORT_MODES, compute_travel_time_hours
-from api.prompts import SYSTEM_PROMPT
+sys.path.insert(0, 'src')
 
-OUTPUT_PATH = Path("train/dataset/train.jsonl")
+from animal_transport.api.rules import CATEGORY_ALLOWED_MODES, TRANSPORT_MODES, compute_travel_time_hours
+from animal_transport.api.prompts import SYSTEM_PROMPT
+
+OUTPUT_PATH = Path("data/train/train.jsonl")
 
 ANIMAL_CATEGORIES = list(CATEGORY_ALLOWED_MODES.keys())
 SIZE_CLASSES = ["small", "medium", "large"]
@@ -98,7 +101,7 @@ def sample_example() -> dict:
     return {"messages": messages}
 
 
-def main(num_samples: int = 5000):
+def main(num_samples: int = 5):
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     with OUTPUT_PATH.open("w", encoding="utf-8") as f:

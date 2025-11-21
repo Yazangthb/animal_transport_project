@@ -11,17 +11,23 @@ from .prompts import SYSTEM_PROMPT
 
 class ReasoningWrapper:
     def __init__(self):
+        # Decide device once and reuse
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"[Reasoning] Using device: {self.device}")
+
         print("[Reasoning] Loading tokenizer...")
         self.tokenizer = AutoTokenizer.from_pretrained(
             REASONING_MODEL_NAME,
             trust_remote_code=True
         )
 
-        print("[Reasoning] Loading base model on CPU...")
+        # Let HF load normally, we'll move to device ourselves
+        print("[Reasoning] Loading base model...")
+        torch_dtype = torch.float16 if self.device.type == "cuda" else torch.float32
+
         base_model = AutoModelForCausalLM.from_pretrained(
             REASONING_MODEL_NAME,
-            device_map={"": "cpu"},
-            torch_dtype=torch.float32,   # avoid mixed precision on Windows CPU
+            torch_dtype=torch_dtype,
             trust_remote_code=True
         )
 
@@ -33,6 +39,8 @@ class ReasoningWrapper:
             print("[Reasoning] WARNING: No LoRA adapters found. Using base model only.")
             self.model = base_model
 
+        # Move the full model to the chosen device
+        self.model.to(self.device)
         self.model.eval()
 
     def _build_messages(self, features: Dict) -> list:
@@ -44,9 +52,14 @@ class ReasoningWrapper:
 
     def plan_transport(self, features: Dict) -> Dict:
         messages = self._build_messages(features)
-        prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        prompt = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
 
-        inputs = self.tokenizer(prompt, return_tensors="pt").to("cpu")
+        # Tokenize and move inputs to the same device as the model
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
 
         with torch.no_grad():
             output_ids = self.model.generate(
@@ -55,7 +68,13 @@ class ReasoningWrapper:
                 do_sample=False,
             )
 
-        generated = self.tokenizer.decode(output_ids[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True)
+        # Use input length from the tensor on the same device
+        input_len = inputs["input_ids"].shape[1]
+        generated = self.tokenizer.decode(
+            output_ids[0][input_len:],
+            skip_special_tokens=True
+        )
+
         print("generated: ", generated)
         try:
             # Assume the generated text starts with JSON
@@ -87,7 +106,6 @@ class ReasoningWrapper:
 
         # Handle different time formats if present
         if "estimated_time" in data:
-            # If model outputs simple time, convert to expected format
             time_str = data["estimated_time"]
             if isinstance(time_str, str):
                 try:
@@ -97,10 +115,11 @@ class ReasoningWrapper:
                         "estimated_time_hours": hours,
                         "notes": "Estimated time from model output."
                     }]
-                except:
+                except Exception:
                     pass
             data.pop("estimated_time", None)
 
+        print("normalized data: ", data)
         return data
 
 

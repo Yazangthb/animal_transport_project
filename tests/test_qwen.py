@@ -1,8 +1,10 @@
+import sys
 import torch
 from transformers import AutoProcessor
 from transformers import Qwen2_5_VLForConditionalGeneration  # <-- CORRECT class
 
-from api.config import VLM_MODEL_NAME
+sys.path.insert(0, 'src')
+from animal_transport.api.config import VLM_MODEL_NAME
 
 model_name = VLM_MODEL_NAME
 

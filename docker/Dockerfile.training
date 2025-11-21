@@ -1,28 +1,69 @@
-FROM nvidia/cuda:11.6.2-runtime-ubuntu20.04
+FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
 
+# -------------------------------------------------------
+# 1. System deps
+# -------------------------------------------------------
 RUN apt-get update && apt-get install -y \
-    python3 python3-pip git wget && \
-    rm -rf /var/lib/apt/lists/*
+    python3 python3-pip python3-venv \
+    git wget curl \
+    libaio-dev libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Ensure "python" points to python3
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3 1
+
+# -------------------------------------------------------
+# 2. Working directory
+# -------------------------------------------------------
+WORKDIR /app
+
+# -------------------------------------------------------
+# 3. Copy pip requirements
+# -------------------------------------------------------
+COPY docker/requirements.txt /app/requirements.txt
+
+# Upgrade pip (DO NOT upgrade setuptools/wheel blindly)
+RUN pip3 install --upgrade pip
+
+# -------------------------------------------------------
+# 4. Force installing PyTorch from the CUDA-matching wheel
+# Avoid unpredictable CPU wheels → avoids meta tensors
+# -------------------------------------------------------
+# RUN pip3 install --extra-index-url https://download.pytorch.org/whl/cu121 \
+#     torch==2.3.1 torchvision torchaudio
+
+# -------------------------------------------------------
+# 5. Install your other dependencies
+# -------------------------------------------------------
+RUN pip3 install -r requirements.txt
+RUN pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+# -------------------------------------------------------
+# 6. Set HuggingFace cache location
+# -------------------------------------------------------
+ENV HF_HOME=/app/hf_cache
+ENV TRANSFORMERS_CACHE=/app/hf_cache
+
+# Avoid "meta" lazy-loading from Accelerate inside containers
+ENV HF_HUB_DISABLE_SYMLINKS_WARNING=1
+ENV HF_HUB_CACHE_SYMLINKS=0
+
+# Force-disable accelerate device_map=auto offloading
+ENV ACCELERATE_DISABLE_MIXED_BATCH=1
+
+# -------------------------------------------------------
+# 7. Copy your project code
+# -------------------------------------------------------
+COPY src /app/src
+COPY scripts /app/scripts
+COPY data /app/data
+
+# Default model
+ENV REASONING_MODEL_NAME="Qwen/Qwen2.5-7B-Instruct"
 
 WORKDIR /app
 
-COPY docker/requirements.txt /app/requirements.txt
-
-# Install PyTorch CUDA 11.6
-RUN pip3 install torch==2.0.1+cu116 torchvision==0.15.2+cu116 torchaudio==2.0.2 \
-    -f https://download.pytorch.org/whl/cu116/torch_stable.html
-
-RUN pip3 install --no-cache-dir -r requirements.txt
-
-ENV HF_HOME=/app/hf_cache
-
-COPY train /app/train
-COPY api/rules.py /app/api/rules.py
-
-ENV REASONING_MODEL_NAME=Qwen/Qwen2.5-7B-Instruct
-
-WORKDIR /app/train
-
-CMD ["bash"]
+CMD ["python", "scripts/train.py"]

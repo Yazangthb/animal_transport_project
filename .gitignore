@@ -25,6 +25,9 @@ wheels/
 *.egg
 MANIFEST
 
+# linux scripts
+*.sh
+
 # PyInstaller
 *.manifest
 *.spec
@@ -144,4 +147,4 @@ tensorboard/
 # Data (uncomment if needed)
 # data/
 # *.csv
-# *.jsonl
+*.jsonl

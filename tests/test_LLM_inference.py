@@ -1,4 +1,7 @@
-from api.inference_reasoning import get_reasoning_wrapper
+import sys
+
+sys.path.insert(0, 'src')
+from animal_transport.api.inference_reasoning import get_reasoning_wrapper
 
 reasoning = get_reasoning_wrapper()
 

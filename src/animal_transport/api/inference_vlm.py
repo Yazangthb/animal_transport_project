@@ -12,20 +12,27 @@ from .config import VLM_MODEL_NAME
 
 class VLMWrapper:
     def __init__(self):
+        # Decide device once
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"[VLM] Using device: {self.device}")
+
         print("[VLM] Loading processor...")
         self.processor = AutoProcessor.from_pretrained(
             VLM_MODEL_NAME, trust_remote_code=True
         )
 
-        print("[VLM] Loading model on CPU (Windows-safe)...")
+        print("[VLM] Loading model...")
+        torch_dtype = torch.float16 if self.device.type == "cuda" else torch.float32
+
         self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             VLM_MODEL_NAME,
-            device_map={"": "cpu"},       # explicit CPU
-            torch_dtype=torch.float32,     # Windows-safe
+            torch_dtype=torch_dtype,
             trust_remote_code=True,
         )
 
-        self.device = "cpu"
+        # Move model to device
+        self.model.to(self.device)
+        self.model.eval()
 
     def analyze_animal(self, img_base64: str):
         # Decode image
@@ -60,7 +67,7 @@ class VLMWrapper:
             messages, tokenize=False
         )
 
-        # Build model inputs
+        # Build model inputs and move to same device as the model
         inputs = self.processor(
             text=[text],
             images=[image],
@@ -68,11 +75,12 @@ class VLMWrapper:
         ).to(self.device)
 
         # Generate model output
-        output = self.model.generate(
-            **inputs,
-            max_new_tokens=300,
-            temperature=0.2,
-        )
+        with torch.no_grad():
+            output = self.model.generate(
+                **inputs,
+                max_new_tokens=300,
+                temperature=0.2,
+            )
 
         decoded = self.processor.batch_decode(
             output, skip_special_tokens=True

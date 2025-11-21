@@ -87,6 +87,7 @@ async def infer(
     }
 
     transport_raw = reasoning.plan_transport(reasoning_input)
+    print("transport_raw: ", transport_raw)
 
     available_modes = [
         TransportMode(
