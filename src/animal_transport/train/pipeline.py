@@ -8,6 +8,8 @@ import json
 import math
 import os
 import random
+import time
+from collections import Counter
 from pathlib import Path
 from typing import Optional
 
@@ -53,6 +55,10 @@ class TrainingPipeline:
         self.trainer = None
         self.metrics_before = {}
         self.metrics_after = {}
+        self.num_params = None
+        self.trainable_params = None
+        self.training_time = None
+        self.peak_memory_gb = None
 
         # Set reproducibility if seed is provided
         if self.config.seed is not None:
@@ -90,9 +96,15 @@ class TrainingPipeline:
                 lora_config=self.config.lora,
             )
 
+            # Calculate model parameters
+            self.num_params = sum(p.numel() for p in self.model.parameters())
+            self.trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+
             logger.info(f"Model loaded successfully. Device: {self.model.device}")
             logger.info(f"Model dtype: {self.model.dtype}")
             logger.info(f"Model training mode: {self.model.training}")
+            logger.info(f"Total parameters: {self.num_params:,}")
+            logger.info(f"Trainable parameters: {self.trainable_params:,}")
 
             if hasattr(self.model, "hf_device_map"):
                 logger.info(f"Model device map: {self.model.hf_device_map}")
@@ -242,9 +254,41 @@ class TrainingPipeline:
             with metrics_file.open("w") as f:
                 json.dump({
                     "before": self.metrics_before,
-                    "after": self.metrics_after
+                    "after": self.metrics_after,
+                    "training_stats": {
+                        "training_time_seconds": self.training_time,
+                        "total_parameters": self.num_params,
+                        "trainable_parameters": self.trainable_params,
+                        "peak_memory_gb": self.peak_memory_gb,
+                    }
                 }, f, indent=2)
             logger.info(f"Metrics saved to {metrics_file}")
+
+            # Log generation quality
+            if "generation" in self.metrics_before and self.metrics_before["generation"]:
+                logger.info("Generation Quality (Before/After):")
+                gen_before = self.metrics_before["generation"]
+                gen_after = self.metrics_after.get("generation", {})
+                logger.info(f"Avg Length: {gen_before.get('avg_response_length', 'N/A'):.2f} -> {gen_after.get('avg_response_length', 'N/A'):.2f}")
+                logger.info(f"Distinct-1: {gen_before.get('distinct_1', 'N/A'):.4f} -> {gen_after.get('distinct_1', 'N/A'):.4f}")
+                logger.info(f"Distinct-2: {gen_before.get('distinct_2', 'N/A'):.4f} -> {gen_after.get('distinct_2', 'N/A'):.4f}")
+
+            # Log task performance
+            if "task" in self.metrics_before and self.metrics_before["task"]:
+                logger.info("Transportation Mode Classification (Before/After):")
+                task_before = self.metrics_before["task"]
+                task_after = self.metrics_after.get("task", {})
+                acc_before = task_before.get('task_accuracy', 0)
+                acc_after = task_after.get('task_accuracy', 0)
+                logger.info(f"Classification Accuracy: {acc_before:.2f} -> {acc_after:.2f}")
+
+            # Log additional stats
+            logger.info("Training Statistics:")
+            logger.info(f"Training Time: {self.training_time:.2f} seconds")
+            logger.info(f"Total Parameters: {self.num_params:,}")
+            logger.info(f"Trainable Parameters: {self.trainable_params:,}")
+            if self.peak_memory_gb is not None:
+                logger.info(f"Peak GPU Memory: {self.peak_memory_gb:.2f} GB")
 
         except Exception as e:
             logger.error(f"Failed to save metrics table: {e}")
@@ -267,6 +311,163 @@ class TrainingPipeline:
             logger.warning(f"Evaluation on {dataset_name} failed: {e}")
             return {}
 
+    def evaluate_generation_quality(self, dataset, num_samples: int = 10):
+        """Evaluate generation quality by generating samples and computing metrics."""
+        try:
+            logger.info(f"Evaluating generation quality with {num_samples} samples...")
+            generated_texts = []
+            lengths = []
+
+            self.model.eval()
+            with torch.no_grad():
+                for _ in range(num_samples):
+                    # Get a random prompt from dataset
+                    idx = random.randint(0, len(dataset) - 1)
+                    sample = dataset[idx]
+                    input_ids = sample["input_ids"]
+
+                    # Use the input as prompt
+                    inputs = {"input_ids": input_ids.unsqueeze(0).to(self.model.device)}
+
+                    # Generate
+                    output_ids = self.model.generate(
+                        **inputs,
+                        max_new_tokens=50,  # Shorter for evaluation
+                        do_sample=True,
+                        temperature=0.7,
+                        top_p=0.9,
+                        pad_token_id=self.tokenizer.eos_token_id,
+                    )
+
+                    # Decode generated text (excluding input)
+                    full_text = self.tokenizer.decode(output_ids[0], skip_special_tokens=True)
+                    input_text = self.tokenizer.decode(input_ids, skip_special_tokens=True)
+                    if full_text.startswith(input_text):
+                        generated = full_text[len(input_text):].strip()
+                    else:
+                        generated = full_text.strip()
+
+                    generated_texts.append(generated)
+                    lengths.append(len(generated.split()))
+
+            self.model.train()
+
+            # Compute metrics
+            if generated_texts:
+                avg_length = sum(lengths) / len(lengths)
+
+                # Distinct-1 and Distinct-2
+                all_tokens = [token for text in generated_texts for token in text.split()]
+                unigrams = all_tokens
+                bigrams = [f"{all_tokens[i]} {all_tokens[i+1]}" for i in range(len(all_tokens)-1)]
+
+                distinct_1 = len(set(unigrams)) / len(unigrams) if unigrams else 0
+                distinct_2 = len(set(bigrams)) / len(bigrams) if bigrams else 0
+
+                metrics = {
+                    "avg_response_length": avg_length,
+                    "distinct_1": distinct_1,
+                    "distinct_2": distinct_2,
+                }
+                logger.info(f"Generation quality - Avg Length: {avg_length:.2f}, Distinct-1: {distinct_1:.4f}, Distinct-2: {distinct_2:.4f}")
+                return metrics
+            else:
+                return {}
+
+        except Exception as e:
+            logger.warning(f"Generation quality evaluation failed: {e}")
+            return {}
+
+    def evaluate_task_performance(self, dataset, num_samples: int = 10):
+        """Evaluate task-specific performance by sampling from the dataset."""
+        try:
+            logger.info(f"Evaluating task-specific performance on {num_samples} dataset samples...")
+
+            correct = 0
+            total = min(num_samples, len(dataset))
+
+            self.model.eval()
+            with torch.no_grad():
+                for i in range(total):
+                    # Get a random sample from dataset
+                    idx = random.randint(0, len(dataset) - 1)
+                    sample_messages = dataset.samples[idx]
+
+                    # Extract user input and expected assistant output
+                    user_content = None
+                    assistant_content = None
+                    for msg in sample_messages:
+                        if msg["role"] == "user":
+                            user_content = msg["content"]
+                        elif msg["role"] == "assistant":
+                            assistant_content = msg["content"]
+
+                    if not user_content or not assistant_content:
+                        logger.debug(f"Sample {i}: Missing user or assistant content, skipping")
+                        continue
+
+                    # Parse expected output
+                    try:
+                        expected_json = json.loads(assistant_content)
+                        expected_available_modes = {mode["mode"] for mode in expected_json.get("available_modes", [])}
+                    except json.JSONDecodeError:
+                        logger.debug(f"Sample {i}: Invalid expected JSON, skipping")
+                        continue
+
+                    # Tokenize user input
+                    inputs = self.tokenizer(
+                        user_content,
+                        return_tensors="pt",
+                        truncation=True,
+                        max_length=256
+                    ).to(self.model.device)
+
+                    # Generate response
+                    output_ids = self.model.generate(
+                        **inputs,
+                        max_new_tokens=256,
+                        do_sample=True,
+                        temperature=0.3,  # Lower temperature for more deterministic JSON output
+                        top_p=0.9,
+                        pad_token_id=self.tokenizer.eos_token_id,
+                    )
+
+                    # Decode response
+                    response = self.tokenizer.decode(output_ids[0], skip_special_tokens=True)
+
+                    # Try to parse generated JSON
+                    try:
+                        generated_json = json.loads(response)
+                        generated_available_modes = {mode["mode"] for mode in generated_json.get("available_modes", [])}
+                    except json.JSONDecodeError:
+                        logger.debug(f"Sample {i}: Invalid generated JSON")
+                        generated_available_modes = set()
+
+                    # Check if generated modes match expected modes
+                    is_correct = expected_available_modes == generated_available_modes
+                    if is_correct:
+                        correct += 1
+
+                    logger.debug(f"Input: {user_content}")
+                    logger.debug(f"Expected modes: {expected_available_modes}")
+                    logger.debug(f"Generated modes: {generated_available_modes}")
+                    logger.debug(f"Correct: {is_correct}")
+
+            self.model.train()
+
+            accuracy = correct / total if total > 0 else 0
+            metrics = {
+                "task_accuracy": accuracy,
+                "correct_answers": correct,
+                "total_questions": total
+            }
+            logger.info(f"Task Performance - Accuracy: {accuracy:.2f} ({correct}/{total})")
+            return metrics
+
+        except Exception as e:
+            logger.warning(f"Task performance evaluation failed: {e}")
+            return {}
+
     def train(self):
         """Execute the training process."""
         try:
@@ -277,17 +478,30 @@ class TrainingPipeline:
             self.metrics_before["train"] = self.evaluate_dataset(self.train_dataset, "train")
             self.metrics_before["val"] = self.evaluate_dataset(self.eval_dataset, "val")
             self.metrics_before["test"] = self.evaluate_dataset(self.test_dataset, "test")
+            self.metrics_before["generation"] = self.evaluate_generation_quality(self.test_dataset, num_samples=5)
+            self.metrics_before["task"] = self.evaluate_task_performance(self.test_dataset)
 
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+                torch.cuda.reset_peak_memory_stats()
 
+            # Start training timer
+            start_time = time.time()
             self.trainer.train()
+            self.training_time = time.time() - start_time
+            logger.info(f"Training completed in {self.training_time:.2f} seconds")
+
+            if torch.cuda.is_available():
+                self.peak_memory_gb = torch.cuda.max_memory_allocated() / 1024**3
+                logger.info(f"Peak GPU memory usage: {self.peak_memory_gb:.2f} GB")
 
             # Run final evaluation on all datasets
             logger.info("Running post-training evaluation...")
             self.metrics_after["train"] = self.evaluate_dataset(self.train_dataset, "train")
             self.metrics_after["val"] = self.evaluate_dataset(self.eval_dataset, "val")
             self.metrics_after["test"] = self.evaluate_dataset(self.test_dataset, "test")
+            self.metrics_after["generation"] = self.evaluate_generation_quality(self.test_dataset, num_samples=5)
+            self.metrics_after["task"] = self.evaluate_task_performance(self.test_dataset)
 
             # For backward compatibility, also run the default evaluation
             if self.eval_dataset is not None:
