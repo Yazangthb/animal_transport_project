@@ -1,6 +1,6 @@
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
 
 def load_tokenizer(model_name: str):
@@ -10,13 +10,15 @@ def load_tokenizer(model_name: str):
 def load_model(model_name: str):
     return AutoModelForCausalLM.from_pretrained(
         model_name,
-        torch_dtype=torch.bfloat16,
+        torch_dtype=torch.float16,
+        load_in_4bit=True,
         device_map="auto",
         trust_remote_code=True,
     )
 
 
 def setup_lora(model):
+    model = prepare_model_for_kbit_training(model)
     lora_config = LoraConfig(
         r=16,
         lora_alpha=32,

@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 class ChatDataset(Dataset):
-    def __init__(self, path: Path, tokenizer, max_len: int = 1024):
+    def __init__(self, path: Path, tokenizer, max_len: int = 512):
         self.samples = []
         self.tokenizer = tokenizer
         self.max_len = max_len
@@ -48,5 +48,4 @@ class ChatDataset(Dataset):
         return {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
-            "labels": input_ids.clone(),
         }
