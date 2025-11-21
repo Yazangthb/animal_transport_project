@@ -4,6 +4,7 @@ Training pipeline module.
 This module provides a modular training pipeline for fine-tuning language models.
 """
 
+import json
 import math
 import os
 import random
@@ -48,7 +49,10 @@ class TrainingPipeline:
         self.model = None
         self.train_dataset = None
         self.eval_dataset = None
+        self.test_dataset = None
         self.trainer = None
+        self.metrics_before = {}
+        self.metrics_after = {}
 
         # Set reproducibility if seed is provided
         if self.config.seed is not None:
@@ -111,14 +115,17 @@ class TrainingPipeline:
                 max_len=self.config.data.max_length,
             )
 
-            # Train/validation split
-            train_size = int(self.config.data.train_split_ratio * len(full_dataset))
-            val_size = len(full_dataset) - train_size
-            self.train_dataset, self.eval_dataset = random_split(
-                full_dataset, [train_size, val_size]
+            # Train/validation/test split
+            total_size = len(full_dataset)
+            test_size = int(self.config.data.test_split_ratio * total_size)
+            train_size = int(self.config.data.train_split_ratio * total_size)
+            val_size = total_size - train_size - test_size
+
+            self.train_dataset, self.eval_dataset, self.test_dataset = random_split(
+                full_dataset, [train_size, val_size, test_size]
             )
 
-            logger.info(f"Dataset split - Train: {len(self.train_dataset)}, Eval: {len(self.eval_dataset)}")
+            logger.info(f"Dataset split - Train: {len(self.train_dataset)}, Val: {len(self.eval_dataset)}, Test: {len(self.test_dataset)}")
 
         except Exception as e:
             logger.error(f"Failed to prepare data: {e}")
@@ -200,43 +207,104 @@ class TrainingPipeline:
             logger.error(f"Failed to setup trainer: {e}")
             raise
 
+    def save_metrics_table(self):
+        """Save and display metrics table."""
+        try:
+            # Prepare data for table
+            table_data = []
+            datasets = ["train", "val", "test"]
+            metrics_keys = ["eval_loss", "perplexity"]
+
+            for dataset in datasets:
+                row = [dataset.upper()]
+                for phase, metrics in [("Before", self.metrics_before), ("After", self.metrics_after)]:
+                    if dataset in metrics and metrics[dataset]:
+                        for key in metrics_keys:
+                            value = metrics[dataset].get(key, "N/A")
+                            if isinstance(value, float):
+                                row.append(f"{value:.4f}")
+                            else:
+                                row.append(str(value))
+                    else:
+                        row.extend(["N/A", "N/A"])
+                table_data.append(row)
+
+            # Print table
+            logger.info("Training Metrics Summary:")
+            header = ["Dataset", "Loss Before", "PPL Before", "Loss After", "PPL After"]
+            logger.info(" | ".join(header))
+            logger.info("-" * len(" | ".join(header)))
+            for row in table_data:
+                logger.info(" | ".join(row))
+
+            # Save to JSON
+            metrics_file = self.config.training.output_dir / "metrics.json"
+            with metrics_file.open("w") as f:
+                json.dump({
+                    "before": self.metrics_before,
+                    "after": self.metrics_after
+                }, f, indent=2)
+            logger.info(f"Metrics saved to {metrics_file}")
+
+        except Exception as e:
+            logger.error(f"Failed to save metrics table: {e}")
+
+    def evaluate_dataset(self, dataset, dataset_name: str):
+        """Evaluate model on a specific dataset and return metrics."""
+        try:
+            logger.info(f"Evaluating on {dataset_name} dataset...")
+            metrics = self.trainer.evaluate(eval_dataset=dataset)
+            if isinstance(metrics, dict) and "eval_loss" in metrics:
+                loss = metrics["eval_loss"]
+                try:
+                    ppl = math.exp(loss)
+                except OverflowError:
+                    ppl = float("inf")
+                metrics["perplexity"] = ppl
+                logger.info(f"{dataset_name} - Loss: {loss:.4f}, Perplexity: {ppl:.4f}")
+            return metrics
+        except Exception as e:
+            logger.warning(f"Evaluation on {dataset_name} failed: {e}")
+            return {}
+
     def train(self):
         """Execute the training process."""
         try:
             logger.info("Starting training...")
+
+            # Pre-training evaluation
+            logger.info("Running pre-training evaluation...")
+            self.metrics_before["train"] = self.evaluate_dataset(self.train_dataset, "train")
+            self.metrics_before["val"] = self.evaluate_dataset(self.eval_dataset, "val")
+            self.metrics_before["test"] = self.evaluate_dataset(self.test_dataset, "test")
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
             self.trainer.train()
 
-            # Run final evaluation if evaluation dataset exists
+            # Run final evaluation on all datasets
+            logger.info("Running post-training evaluation...")
+            self.metrics_after["train"] = self.evaluate_dataset(self.train_dataset, "train")
+            self.metrics_after["val"] = self.evaluate_dataset(self.eval_dataset, "val")
+            self.metrics_after["test"] = self.evaluate_dataset(self.test_dataset, "test")
+
+            # For backward compatibility, also run the default evaluation
             if self.eval_dataset is not None:
                 try:
-                    logger.info("Running final evaluation...")
                     eval_metrics = self.trainer.evaluate()
-                    logger.info(f"Final evaluation metrics: {eval_metrics}")
+                    logger.info(f"Final evaluation metrics (val): {eval_metrics}")
 
                     # Manually add eval_loss to log_history for plotting (for older transformers versions)
                     if isinstance(eval_metrics, dict) and "eval_loss" in eval_metrics:
-                        # Check if eval_loss is already in log_history (newer versions add it automatically)
                         has_eval_loss = any("eval_loss" in str(entry) for entry in self.trainer.state.log_history)
                         if not has_eval_loss:
                             self.trainer.state.log_history.append({
                                 "step": self.trainer.state.global_step,
                                 "eval_loss": float(eval_metrics["eval_loss"]),
                             })
-
-                        # Calculate perplexity
-                        final_eval_loss = eval_metrics["eval_loss"]
-                        try:
-                            ppl = math.exp(final_eval_loss)
-                        except OverflowError:
-                            ppl = float("inf")
-                        logger.info(f"Final validation loss: {final_eval_loss:.4f}, perplexity: {ppl:.4f}")
                 except Exception as eval_error:
                     logger.warning(f"Final evaluation failed (possibly unsupported in this transformers version): {eval_error}")
-            else:
-                logger.info("Skipping evaluation (no evaluation dataset)")
 
         except Exception as e:
             logger.error(f"Training failed: {e}")
@@ -252,6 +320,9 @@ class TrainingPipeline:
             # Save training plots
             logger.info("Saving training plots...")
             save_training_plots(self.trainer, self.config.training.output_dir)
+
+            # Save and display metrics table
+            self.save_metrics_table()
 
         except Exception as e:
             logger.error(f"Failed to save model: {e}")

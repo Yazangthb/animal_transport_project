@@ -17,7 +17,8 @@ class DataConfig:
     """Configuration for dataset loading and preprocessing."""
     data_path: Path = Path("data/train/train.jsonl")
     max_length: int = 512
-    train_split_ratio: float = 0.9
+    train_split_ratio: float = 0.8
+    test_split_ratio: float = 0.1
 
 
 @dataclass
