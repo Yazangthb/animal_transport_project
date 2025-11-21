@@ -101,7 +101,7 @@ def sample_example() -> dict:
     return {"messages": messages}
 
 
-def main(num_samples: int = 5):
+def main(num_samples: int = 20):
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     with OUTPUT_PATH.open("w", encoding="utf-8") as f:

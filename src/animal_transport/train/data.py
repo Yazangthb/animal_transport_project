@@ -1,51 +1,95 @@
+"""
+Dataset utilities for training.
+
+This module provides dataset classes for loading and preprocessing training data.
+"""
+
 import json
-from typing import List
+from pathlib import Path
+from typing import Dict, List
 
 import torch
 from torch.utils.data import Dataset
 
-from pathlib import Path
+from . import logger
 
 
 class ChatDataset(Dataset):
+    """
+    Dataset for chat-format training data.
+
+    Loads JSONL format data with messages in OpenAI chat format and tokenizes them.
+    """
+
     def __init__(self, path: Path, tokenizer, max_len: int = 512):
-        self.samples = []
+        """
+        Initialize the chat dataset.
+
+        Args:
+            path: Path to the JSONL data file
+            tokenizer: Tokenizer to use for encoding
+            max_len: Maximum sequence length
+        """
+        self.samples: List[List[Dict[str, str]]] = []
         self.tokenizer = tokenizer
         self.max_len = max_len
 
+        logger.info(f"Loading dataset from {path}")
         with path.open("r", encoding="utf-8") as f:
-            for line in f:
-                obj = json.loads(line)
-                self.samples.append(obj["messages"])
+            for line_num, line in enumerate(f, 1):
+                try:
+                    obj = json.loads(line.strip())
+                    if "messages" not in obj:
+                        logger.warning(f"Line {line_num}: Missing 'messages' field, skipping")
+                        continue
+                    self.samples.append(obj["messages"])
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Line {line_num}: Invalid JSON, skipping: {e}")
+                    continue
 
-    def __len__(self):
+        logger.info(f"Loaded {len(self.samples)} samples from dataset")
+
+    def __len__(self) -> int:
+        """Return the number of samples in the dataset."""
         return len(self.samples)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        """
+        Get a tokenized sample by index.
+
+        Args:
+            idx: Sample index
+
+        Returns:
+            Dict containing input_ids and attention_mask tensors
+        """
         messages = self.samples[idx]
 
         text_parts: List[str] = []
-        for m in messages:
-            role = m["role"].upper()
-            content = m["content"]
+        for message in messages:
+            role = message["role"].upper()
+            content = message["content"]
+
             if role == "SYSTEM":
                 text_parts.append(f"<system>{content}</system>")
             elif role == "USER":
                 text_parts.append(f"<user>{content}</user>")
             elif role == "ASSISTANT":
                 text_parts.append(f"<assistant>{content}</assistant>")
+            else:
+                logger.warning(f"Unknown role '{role}' in message, treating as user")
+                text_parts.append(f"<user>{content}</user>")
 
         full_text = "\n".join(text_parts)
+
         tokenized = self.tokenizer(
             full_text,
             truncation=True,
             max_length=self.max_len,
             return_tensors="pt",
         )
-        input_ids = tokenized["input_ids"][0]
-        attention_mask = tokenized["attention_mask"][0]
 
         return {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
+            "input_ids": tokenized["input_ids"][0],
+            "attention_mask": tokenized["attention_mask"][0],
         }
