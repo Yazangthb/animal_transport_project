@@ -29,3 +29,27 @@ def setup_logging(log_level: str = "INFO", log_file: Path = None):
 
 # Default logger for the training module
 logger = logging.getLogger(__name__)
+
+# Re-export main components for backwards compatibility
+from .core import TrainingPipeline
+from .evaluation import ModelEvaluator
+from .configuration import TrainingPipelineConfig, get_default_config, load_config_from_env
+from .data import ChatDataset
+from .callbacks import GenerateCallback
+from .scripts import standard_main, simplified_main, create_simple_config
+
+
+__all__ = [
+    "setup_logging",
+    "logger",
+    "TrainingPipeline",
+    "ModelEvaluator", 
+    "TrainingPipelineConfig",
+    "get_default_config",
+    "load_config_from_env",
+    "ChatDataset",
+    "GenerateCallback",
+    "standard_main",
+    "simplified_main",
+    "create_simple_config"
+]
