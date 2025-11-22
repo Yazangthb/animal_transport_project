@@ -148,3 +148,4 @@ tensorboard/
 # data/
 # *.csv
 *.jsonl
+*.json
