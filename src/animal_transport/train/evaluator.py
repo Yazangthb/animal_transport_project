@@ -8,6 +8,8 @@ including standard metrics, generation quality, and task-specific performance.
 import json
 import math
 import random
+import time
+from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
 import numpy as np
@@ -171,13 +173,14 @@ class ModelEvaluator:
             logger.warning(f"Generation quality evaluation failed: {e}")
             return {}
 
-    def evaluate_task_performance(self, dataset, num_samples: int = 100) -> Dict:
+    def evaluate_task_performance(self, dataset, num_samples: int = 100, save_detailed_results: bool = True) -> Dict:
         """
         Evaluate comprehensive task-specific performance metrics.
 
         Args:
             dataset: Dataset to evaluate on
             num_samples: Number of samples to evaluate
+            save_detailed_results: Whether to save detailed results to file
 
         Returns:
             Dict containing task performance metrics
@@ -186,6 +189,9 @@ class ModelEvaluator:
             logger.info(
                 f"Evaluating comprehensive task performance on up to {num_samples} samples..."
             )
+            
+            # Collect detailed results for analysis
+            detailed_results = [] if save_detailed_results else None
 
             # Initialize metric counters (overall)
             total_samples = 0
@@ -289,6 +295,24 @@ class ModelEvaluator:
                     generated_json = self._extract_json(response)
                     if generated_json is None:
                         # Not valid JSON in any form
+                        # Still record this for analysis
+                        if detailed_results is not None:
+                            detailed_results.append({
+                                "sample_index": local_idx,
+                                "user_input": user_content,
+                                "ground_truth": expected_json,
+                                "generated_response": response,
+                                "generated_json": None,
+                                "valid_json": False,
+                                "schema_compliant": False,
+                                "exact_match": False,
+                                "allowed_modes_correct": False,
+                                "disallowed_modes_correct": False,
+                                "rule_attribution_correct": False,
+                                "hallucination_detected": False,
+                                "is_ood": is_ood,
+                                "error": "Invalid JSON format"
+                            })
                         continue
                     valid_json_count += 1
 
@@ -373,6 +397,38 @@ class ModelEvaluator:
                     ):
                         hallucination_count += 1
 
+                    # Collect detailed results for analysis
+                    if detailed_results is not None:
+                        # Calculate accuracy flags for this sample
+                        exact_match = (generated_json == expected_json)
+                        allowed_modes_correct_flag = (expected_allowed == generated_allowed)
+                        disallowed_modes_correct_flag = (expected_disallowed == generated_disallowed)
+                        rule_attribution_correct_flag = self._check_rule_attribution(
+                            generated_reasoning, expected_json
+                        )
+                        hallucination_detected = self._check_hallucination(
+                            generated_reasoning, expected_json
+                        )
+                        schema_compliant = self._is_schema_compliant(generated_json)
+                        
+                        detailed_results.append({
+                            "sample_index": local_idx,
+                            "user_input": user_content,
+                            "ground_truth": expected_json,
+                            "generated_response": response,
+                            "generated_json": generated_json,
+                            "valid_json": True,
+                            "schema_compliant": schema_compliant,
+                            "exact_match": exact_match,
+                            "allowed_modes_correct": allowed_modes_correct_flag,
+                            "disallowed_modes_correct": disallowed_modes_correct_flag,
+                            "rule_attribution_correct": rule_attribution_correct_flag,
+                            "hallucination_detected": hallucination_detected,
+                            "is_ood": is_ood,
+                            "time_errors": [abs(expected_times[mode] - generated_times[mode]) 
+                                          for mode in expected_times if mode in generated_times]
+                        })
+
             self.model.train()
 
             metrics = {}
@@ -419,6 +475,10 @@ class ModelEvaluator:
                         calib_confidences, calib_corrects, n_bins=10
                     )
                     metrics["calibration"] = {"ece": ece}
+
+            # Save detailed results if requested
+            if detailed_results is not None:
+                self._save_detailed_evaluation_results(detailed_results, metrics)
 
             logger.info("Task Performance Metrics:")
             logger.info(
@@ -734,3 +794,57 @@ class ModelEvaluator:
             response = response[:-len("</assistant>")].strip()
             
         return response
+
+    def _save_detailed_evaluation_results(self, detailed_results: List[Dict], metrics: Dict):
+        """
+        Save detailed evaluation results to a JSON file for analysis.
+        
+        Args:
+            detailed_results: List of detailed result dictionaries
+            metrics: Calculated metrics dictionary
+        """
+        try:
+            # Create output directory if it doesn't exist
+            output_dir = Path("evaluation_results")
+            output_dir.mkdir(exist_ok=True)
+            
+            # Generate filename with timestamp
+            timestamp = int(time.time())
+            filename = f"detailed_evaluation_results_{timestamp}.json"
+            filepath = output_dir / filename
+            
+            # Prepare the output data
+            output_data = {
+                "metadata": {
+                    "timestamp": timestamp,
+                    "total_samples": len(detailed_results),
+                    "metrics_summary": metrics
+                },
+                "detailed_results": detailed_results
+            }
+            
+            # Save to file
+            with filepath.open("w", encoding="utf-8") as f:
+                json.dump(output_data, f, indent=2, ensure_ascii=False)
+            
+            logger.info(f"Detailed evaluation results saved to {filepath}")
+            logger.info(f"Total samples analyzed: {len(detailed_results)}")
+            
+            # Log some summary statistics
+            if detailed_results:
+                valid_json_count = sum(1 for r in detailed_results if r.get("valid_json", False))
+                exact_matches = sum(1 for r in detailed_results if r.get("exact_match", False))
+                json_failures = sum(1 for r in detailed_results if not r.get("valid_json", False))
+                
+                logger.info(f"Valid JSON generations: {valid_json_count}/{len(detailed_results)} ({valid_json_count/len(detailed_results)*100:.1f}%)")
+                logger.info(f"Exact matches: {exact_matches}/{len(detailed_results)} ({exact_matches/len(detailed_results)*100:.1f}%)")
+                logger.info(f"JSON parsing failures: {json_failures}")
+                
+                if json_failures > 0:
+                    logger.info("Sample JSON parsing failures:")
+                    for i, result in enumerate(detailed_results[:3]):  # Show first 3 failures
+                        if not result.get("valid_json", False):
+                            logger.info(f"  Sample {i+1}: {result.get('generated_response', 'N/A')[:100]}...")
+                
+        except Exception as e:
+            logger.warning(f"Failed to save detailed evaluation results: {e}")
