@@ -91,15 +91,29 @@ class ModelEvaluator:
                 # Sample without replacement
                 indices = random.sample(range(len(dataset)), n)
                 for idx in indices:
-                    sample = dataset[idx]
-                    input_ids = sample["input_ids"]
+                    # Get raw messages from dataset
+                    sample_messages = self._unwrap_samples_from_dataset(dataset, idx)
+                    if sample_messages is None:
+                        continue
+                    
+                    # Extract system and user messages only (not assistant)
+                    prompt_messages = []
+                    for msg in sample_messages:
+                        if msg["role"] in ["system", "user"]:
+                            prompt_messages.append(msg)
+                    
+                    # Format prompt for chat model
+                    prompt_text = self._format_messages_for_tokenization(prompt_messages)
+                    
+                    # Tokenize prompt only
+                    inputs = self.tokenizer(
+                        prompt_text,
+                        return_tensors="pt",
+                        truncation=True,
+                        max_length=256,
+                    ).to(self.model.device)
 
-                    # Use the input as prompt
-                    inputs = {
-                        "input_ids": input_ids.unsqueeze(0).to(self.model.device)
-                    }
-
-                    # Generate
+                    # Generate response
                     output_ids = self.model.generate(
                         **inputs,
                         max_new_tokens=50,  # Shorter for evaluation
@@ -109,20 +123,17 @@ class ModelEvaluator:
                         pad_token_id=self.tokenizer.eos_token_id,
                     )
 
-                    # Decode generated text (excluding input)
+                    # Decode generated text
                     full_text = self.tokenizer.decode(
                         output_ids[0], skip_special_tokens=True
                     )
-                    input_text = self.tokenizer.decode(
-                        input_ids, skip_special_tokens=True
-                    )
-                    if full_text.startswith(input_text):
-                        generated = full_text[len(input_text) :].strip()
-                    else:
-                        generated = full_text.strip()
-
-                    generated_texts.append(generated)
-                    lengths.append(len(generated.split()))
+                    
+                    # Extract just the generated assistant response
+                    generated = self._extract_assistant_response(full_text, prompt_text)
+                    
+                    if generated and generated.strip():
+                        generated_texts.append(generated)
+                        lengths.append(len(generated.split()))
 
             self.model.train()
 
@@ -211,11 +222,14 @@ class ModelEvaluator:
                     # Extract user input and expected assistant output
                     user_content = None
                     assistant_content = None
+                    system_content = None
                     for msg in sample_messages:
                         if msg["role"] == "user":
                             user_content = msg["content"]
                         elif msg["role"] == "assistant":
                             assistant_content = msg["content"]
+                        elif msg["role"] == "system":
+                            system_content = msg["content"]
 
                     if not user_content or not assistant_content:
                         continue
@@ -234,9 +248,18 @@ class ModelEvaluator:
                     if is_ood:
                         ood_total += 1
 
-                    # Tokenize user input
+                    # Create proper prompt with system message
+                    prompt_messages = []
+                    if system_content:
+                        prompt_messages.append({"role": "system", "content": system_content})
+                    prompt_messages.append({"role": "user", "content": user_content})
+                    
+                    # Format prompt for tokenization
+                    prompt_text = self._format_messages_for_tokenization(prompt_messages)
+                    
+                    # Tokenize prompt (not just user input)
                     inputs = self.tokenizer(
-                        user_content,
+                        prompt_text,
                         return_tensors="pt",
                         truncation=True,
                         max_length=256,
@@ -252,9 +275,15 @@ class ModelEvaluator:
                     )
 
                     # Decode response
-                    response = self.tokenizer.decode(
+                    full_response = self.tokenizer.decode(
                         output_ids[0], skip_special_tokens=True
                     )
+
+                    # Extract just the assistant response portion
+                    response = self._extract_assistant_response(full_response, prompt_text)
+                    
+                    if not response:
+                        continue
 
                     # Extract JSON robustly
                     generated_json = self._extract_json(response)
@@ -639,3 +668,69 @@ class ModelEvaluator:
         if not isinstance(json_obj["reasoning"], str):
             return False
         return True
+
+    def _format_messages_for_tokenization(self, messages: List[Dict[str, str]]) -> str:
+        """
+        Format messages for tokenization in the same way as ChatDataset.
+        
+        Args:
+            messages: List of message dictionaries with 'role' and 'content'
+            
+        Returns:
+            Formatted text string
+        """
+        text_parts = []
+        for message in messages:
+            role = message["role"].upper()
+            content = message["content"]
+            
+            if role == "SYSTEM":
+                text_parts.append(f"<system>{content}</system>")
+            elif role == "USER":
+                text_parts.append(f"<user>{content}</user>")
+            elif role == "ASSISTANT":
+                text_parts.append(f"<assistant>{content}</assistant>")
+            else:
+                text_parts.append(f"<user>{content}</user>")
+        
+        return "\n".join(text_parts)
+
+    def _extract_assistant_response(self, full_text: str, prompt_text: str) -> str:
+        """
+        Extract the assistant response from generated text.
+        
+        Args:
+            full_text: The complete generated text
+            prompt_text: The prompt that was given to the model
+            
+        Returns:
+            The assistant response portion
+        """
+        # Find where the prompt ends in the full text
+        prompt_end = full_text.find(prompt_text)
+        if prompt_end == -1:
+            # Fallback: look for assistant marker
+            assistant_start = full_text.find("<assistant>")
+            if assistant_start != -1:
+                # Extract from assistant marker to end
+                response_start = assistant_start + len("<assistant>")
+                response = full_text[response_start:].strip()
+                # Remove any trailing special tokens
+                if "<" in response:
+                    response = response[:response.find("<")].strip()
+                return response
+            else:
+                # Last resort: return the whole text
+                return full_text.strip()
+        
+        # Extract text after the prompt
+        response_start = prompt_end + len(prompt_text)
+        response = full_text[response_start:].strip()
+        
+        # Clean up any leading/trailing markers
+        if response.startswith("<assistant>"):
+            response = response[len("<assistant>"):].strip()
+        if response.endswith("</assistant>"):
+            response = response[:-len("</assistant>")].strip()
+            
+        return response
