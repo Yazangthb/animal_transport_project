@@ -61,6 +61,16 @@ class TrainingConfig:
     load_best_model_at_end: bool = False
     metric_for_best_model: Optional[str] = None
     greater_is_better: bool = False
+    
+    # Task-aware loss configuration
+    enable_task_loss: bool = True
+    lm_loss_weight: float = 1.0
+    allowed_modes_weight: float = 2.0
+    disallowed_modes_weight: float = 2.0
+    schema_loss_weight: float = 1.0
+    reasoning_loss_weight: float = 1.0
+    loss_temperature: float = 1.0
+    task_loss_schedule: bool = True
 
 
 @dataclass

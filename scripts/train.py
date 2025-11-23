@@ -81,6 +81,54 @@ def parse_args():
         help="Path to log file",
     )
 
+    parser.add_argument(
+        "--enable-task-loss",
+        action="store_true",
+        help="Enable task-aware loss optimization for transportation modes",
+    )
+
+    parser.add_argument(
+        "--lm-loss-weight",
+        type=float,
+        default=1.0,
+        help="Weight for language modeling loss component",
+    )
+
+    parser.add_argument(
+        "--allowed-modes-weight",
+        type=float,
+        default=2.0,
+        help="Weight for allowed modes classification loss",
+    )
+
+    parser.add_argument(
+        "--disallowed-modes-weight",
+        type=float,
+        default=2.0,
+        help="Weight for disallowed modes classification loss",
+    )
+
+    parser.add_argument(
+        "--schema-loss-weight",
+        type=float,
+        default=1.0,
+        help="Weight for JSON schema compliance loss",
+    )
+
+    parser.add_argument(
+        "--reasoning-loss-weight",
+        type=float,
+        default=1.0,
+        help="Weight for reasoning quality loss",
+    )
+
+    parser.add_argument(
+        "--loss-temperature",
+        type=float,
+        default=1.0,
+        help="Temperature for loss scaling",
+    )
+
     return parser.parse_args()
 
 
@@ -108,6 +156,32 @@ def main():
         config.training.output_dir = Path(args.output_dir)
     if args.data_path is not None:
         config.data.data_path = Path(args.data_path)
+
+    # Configure task-aware loss parameters
+    if args.enable_task_loss is not None:
+        config.training.enable_task_loss = args.enable_task_loss
+    if args.lm_loss_weight is not None:
+        config.training.lm_loss_weight = args.lm_loss_weight
+    if args.allowed_modes_weight is not None:
+        config.training.allowed_modes_weight = args.allowed_modes_weight
+    if args.disallowed_modes_weight is not None:
+        config.training.disallowed_modes_weight = args.disallowed_modes_weight
+    if args.schema_loss_weight is not None:
+        config.training.schema_loss_weight = args.schema_loss_weight
+    if args.reasoning_loss_weight is not None:
+        config.training.reasoning_loss_weight = args.reasoning_loss_weight
+    if args.loss_temperature is not None:
+        config.training.loss_temperature = args.loss_temperature
+
+    # Log task-aware training configuration
+    if config.training.enable_task_loss:
+        logger.info("Task-aware loss optimization enabled with weights:")
+        logger.info(f"  - Language Modeling: {config.training.lm_loss_weight}")
+        logger.info(f"  - Allowed Modes: {config.training.allowed_modes_weight}")
+        logger.info(f"  - Disallowed Modes: {config.training.disallowed_modes_weight}")
+        logger.info(f"  - Schema Compliance: {config.training.schema_loss_weight}")
+        logger.info(f"  - Reasoning Quality: {config.training.reasoning_loss_weight}")
+        logger.info(f"  - Loss Temperature: {config.training.loss_temperature}")
 
     # Create and run training pipeline
     pipeline = TrainingPipeline(config)

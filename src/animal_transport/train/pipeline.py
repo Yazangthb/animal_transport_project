@@ -30,6 +30,14 @@ from .metrics import MetricsHandler
 from .model import load_model, load_tokenizer, setup_lora
 from .utils import save_training_plots, set_seed
 
+# Import task-aware training components
+try:
+    from .custom_trainer import create_task_aware_trainer, TransportAwareTrainer
+    TASK_AWARE_AVAILABLE = True
+except ImportError:
+    TASK_AWARE_AVAILABLE = False
+    logger.warning("Task-aware trainer not available, falling back to standard trainer")
+
 
 class TrainingPipeline:
     """
@@ -216,15 +224,34 @@ class TrainingPipeline:
                 )
                 callbacks.append(generate_callback)
 
-            logger.info("Initializing trainer...")
-            self.trainer = Trainer(
-                model=self.model,
-                args=training_args,
-                train_dataset=self.train_dataset,
-                eval_dataset=self.eval_dataset,
-                data_collator=data_collator,
-                callbacks=callbacks,
-            )
+            # Choose trainer based on configuration
+            if (self.config.training.enable_task_loss and 
+                TASK_AWARE_AVAILABLE and 
+                TransportAwareTrainer is not None):
+                
+                logger.info("Using TransportAwareTrainer with task-specific loss optimization")
+                self.trainer = create_task_aware_trainer(
+                    model=self.model,
+                    args=self.config.training,
+                    train_dataset=self.train_dataset,
+                    eval_dataset=self.eval_dataset,
+                    tokenizer=self.tokenizer,
+                )
+                # Add callbacks to the custom trainer
+                for callback in callbacks:
+                    self.trainer.add_callback(callback)
+                    
+            else:
+                logger.info("Using standard Trainer (task-aware loss disabled)")
+                # Initialize standard trainer
+                self.trainer = Trainer(
+                    model=self.model,
+                    args=training_args,
+                    train_dataset=self.train_dataset,
+                    eval_dataset=self.eval_dataset,
+                    data_collator=data_collator,
+                    callbacks=callbacks,
+                )
 
             # Initialize evaluator
             self.evaluator = ModelEvaluator(self.model, self.tokenizer, self.trainer)
@@ -351,7 +378,18 @@ class TrainingPipeline:
                 "total_parameters": self.num_params,
                 "trainable_parameters": self.trainable_params,
                 "peak_memory_gb": self.peak_memory_gb,
+                "task_aware_training": getattr(self.config.training, 'enable_task_loss', False),
             }
+            
+            # Add task-aware training details if enabled
+            if getattr(self.config.training, 'enable_task_loss', False):
+                training_stats.update({
+                    "lm_loss_weight": getattr(self.config.training, 'lm_loss_weight', 1.0),
+                    "allowed_modes_weight": getattr(self.config.training, 'allowed_modes_weight', 2.0),
+                    "disallowed_modes_weight": getattr(self.config.training, 'disallowed_modes_weight', 2.0),
+                    "schema_loss_weight": getattr(self.config.training, 'schema_loss_weight', 1.0),
+                })
+            
             self.metrics_handler.save_metrics_table(self.metrics_before, self.metrics_after, training_stats)
 
         except Exception as e:
