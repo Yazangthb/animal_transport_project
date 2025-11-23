@@ -65,22 +65,12 @@ class ChatDataset(Dataset):
         """
         messages = self.samples[idx]
 
-        text_parts: List[str] = []
-        for message in messages:
-            role = message["role"].upper()
-            content = message["content"]
-
-            if role == "SYSTEM":
-                text_parts.append(f"<system>{content}</system>")
-            elif role == "USER":
-                text_parts.append(f"<user>{content}</user>")
-            elif role == "ASSISTANT":
-                text_parts.append(f"<assistant>{content}</assistant>")
-            else:
-                logger.warning(f"Unknown role '{role}' in message, treating as user")
-                text_parts.append(f"<user>{content}</user>")
-
-        full_text = "\n".join(text_parts)
+        # Use the same chat template as inference for consistency
+        full_text = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
 
         tokenized = self.tokenizer(
             full_text,

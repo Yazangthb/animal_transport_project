@@ -149,3 +149,11 @@ tensorboard/
 # *.csv
 *.jsonl
 *.json
+# Additional ML and image files
+*.jpg
+*.avif
+*.safetensors
+*.bin
+*.pt
+*.pth
+animal_transport_lora/

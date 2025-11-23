@@ -731,7 +731,7 @@ class ModelEvaluator:
 
     def _format_messages_for_tokenization(self, messages: List[Dict[str, str]]) -> str:
         """
-        Format messages for tokenization in the same way as ChatDataset.
+        Format messages for tokenization using the same template as training.
         
         Args:
             messages: List of message dictionaries with 'role' and 'content'
@@ -739,21 +739,12 @@ class ModelEvaluator:
         Returns:
             Formatted text string
         """
-        text_parts = []
-        for message in messages:
-            role = message["role"].upper()
-            content = message["content"]
-            
-            if role == "SYSTEM":
-                text_parts.append(f"<system>{content}</system>")
-            elif role == "USER":
-                text_parts.append(f"<user>{content}</user>")
-            elif role == "ASSISTANT":
-                text_parts.append(f"<assistant>{content}</assistant>")
-            else:
-                text_parts.append(f"<user>{content}</user>")
-        
-        return "\n".join(text_parts)
+        # Use the same chat template as training and inference
+        return self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
 
     def _extract_assistant_response(self, full_text: str, prompt_text: str) -> str:
         """

@@ -18,6 +18,14 @@ from animal_transport.api.rules import (
 )
 from animal_transport.api.prompts import SYSTEM_PROMPT
 
+# Load tokenizer for consistent chat formatting
+try:
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-3B-Instruct", trust_remote_code=True)
+    CHAT_TEMPLATE_AVAILABLE = True
+except Exception:
+    CHAT_TEMPLATE_AVAILABLE = False
+
 OUTPUT_PATH = Path("data/train/train.jsonl")
 
 ANIMAL_CATEGORIES = list(CATEGORY_ALLOWED_MODES.keys())
@@ -71,14 +79,14 @@ def sample_example() -> dict:
         "reasoning": reasoning,
     }
 
-    # Chat message format exactly as specified
+    # Chat message format compatible with apply_chat_template
     messages = [
         {
             "role": "system",
             "content": SYSTEM_PROMPT,
         },
         {
-            "role": "user",
+            "role": "user", 
             "content": json.dumps(input_features, ensure_ascii=False),
         },
         {
@@ -86,11 +94,14 @@ def sample_example() -> dict:
             "content": json.dumps(output_json, ensure_ascii=False),
         },
     ]
+    
+    # Note: The exact formatting is handled by tokenizer.apply_chat_template
+    # during training and inference, ensuring consistency across all components
 
     return {"messages": messages}
 
 
-def main(num_samples: int = 2000):
+def main(num_samples: int = 20):
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     with OUTPUT_PATH.open("w", encoding="utf-8") as f:

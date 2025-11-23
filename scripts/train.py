@@ -13,7 +13,7 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from animal_transport.train import setup_logging
+from animal_transport.train import setup_logging, logger
 from animal_transport.train.config import get_default_config, load_config_from_env
 from animal_transport.train.pipeline import TrainingPipeline
 

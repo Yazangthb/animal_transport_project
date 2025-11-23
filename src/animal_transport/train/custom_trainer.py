@@ -282,9 +282,9 @@ class TaskAwareDataCollator(DataCollatorForLanguageModeling):
     """
     Custom data collator that preserves task information for loss computation.
     """
-    
+
     def __init__(self, tokenizer, mlm=False, mlm_probability=0.15, task_loss_weight=1.0):
-        super().__init__(tokenizer, mlm, mlm_probability)
+        super().__init__(tokenizer=tokenizer, mlm=mlm, mlm_probability=mlm_probability, whole_word_mask=False)
         self.task_loss_weight = task_loss_weight
         
     def __call__(self, examples: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
