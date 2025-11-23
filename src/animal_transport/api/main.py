@@ -11,6 +11,13 @@ from .inference_reasoning import get_reasoning_wrapper
 
 app = FastAPI(title="Animal Transport Reasoning Service")
 
+print(f"FastAPI docs enabled at: {app.docs_url}")
+print(f"FastAPI redoc enabled at: {app.redoc_url}")
+
+@app.on_event("startup")
+async def startup_event():
+    print("Application startup complete. Docs should be accessible.")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
