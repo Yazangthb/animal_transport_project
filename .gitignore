@@ -157,3 +157,4 @@ tensorboard/
 *.pt
 *.pth
 animal_transport_lora/
+!tests/bird.avif
