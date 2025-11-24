@@ -132,6 +132,48 @@ print(response.json())
 ```
 
 ---
+## Example Output
+
+### VLM Output JSON
+
+```json
+{'animal_name': 'tiger', 'animal_category': 'wild', 'size_class': 'large', 'is_domesticated': False, 'dangerous_to_humans': True}
+```
+
+### LLM → Transport Plan
+
+```json
+{
+  "available_modes": [
+    "specialized_animal_freight"
+  ],
+  "disallowed_modes": [
+    "car_cabin",
+    "car_crate",
+    "van_cargo",
+    "truck_livestock",
+    "bus_cabin",
+    "train_cabin",
+    "train_cargo",
+    "plane_cabin",
+    "plane_cargo"
+  ],
+  "distance_km": 150.0,
+  "estimated_travel_time_hours": {
+    "bus_cabin": null,
+    "car_cabin": null,
+    "car_crate": null,
+    "plane_cabin": null,
+    "plane_cargo": null,
+    "specialized_animal_freight": 2.48,
+    "train_cabin": null,
+    "train_cargo": null
+  },
+  "reasoning": "Dangerous or wild animals are not permitted in passenger cabins of public transport. Long-distance travel favors air transport or specialized freight due to time and welfare."
+}
+```
+
+---
 
 # 🧠 System Overview
 
